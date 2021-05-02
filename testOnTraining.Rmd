@@ -1,0 +1,107 @@
+---
+title: 'Test on Training to Manage Overfitting'
+author: "Breck Baldwin"
+date: "5/1/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Run some posterior predictive checks on logistic regression and Andrew's mechanistic model.
+
+```{r}
+
+library(cmdstanr)
+N_distances = 19;
+x_distances = c(2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20)
+y_successes = c(1346,577,337,208,149,136,111,69,67,75,52,46,54,28,27,31,33,20,24)
+n_attempts = c(1443,694,455,353,272,256,240,217,200,237,202,192,174,167,201,195,191,147,152)
+hold_out = rep(0, N_distances)
+#hold_out[10:N_distances] = 1
+stan_data = list(N_distances = N_distances, x_distances = x_distances,
+                 y_successes = y_successes, n_attempts = n_attempts, 
+                 hold_out = hold_out)
+
+modelLogReg = cmdstan_model("stan/logisticGolf.stan")
+seed = 12
+iter_warmup = 1000
+iter_sampling = iter_warmup
+chains = 4
+
+fitLogReg = modelLogReg$sample(data = stan_data, seed = seed, 
+                               iter_warmup = iter_warmup, 
+                               iter_sampling = iter_sampling, chains = chains)
+
+modelMecha = cmdstan_model("stan/mechanisticGolf.stan")
+
+fitMecha = modelMecha$sample(data = stan_data, seed = seed, 
+                             iter_warmup = iter_warmup, 
+                             iter_sampling = iter_sampling, chains = chains)
+
+# plot posterior predictive check and predictions on held out
+
+library(ggplot2)
+library(tidyverse)
+
+pull_predictions = function(fit) {
+
+  held_out_pred = fit$draws(variables = c('held_out_pred'), format = 'array')
+  posterior_pred_training = fit$draws(variables = c('posterior_pred_training'), format = 'array')
+
+  dims = dim(held_out_pred)
+  numSamples = dims[1]
+  numChains = dims[2]
+  numData = dims[3]
+
+  heldOutPred = matrix(nrow = numData, ncol = numSamples * numChains)
+
+  meanProbHeldOut = rep(-1, numData)
+  meanProbPostPredTrain = rep(-1, numData)
+  for (i in 1:numData) {
+    meanProbHeldOut[i] = mean(held_out_pred[1:numSamples, 1:numChains, i])
+    meanProbPostPredTrain[i] = mean(posterior_pred_training[1:numSamples, 1:numChains, i])
+  }
+  return(list(meanProbHeldOut, meanProbPostPredTrain))
+}
+
+meansLogReg = pull_predictions(fitLogReg)
+meansMecha = pull_predictions(fitMecha)
+
+fitsDf = data.frame("Held_Out_LR" = unlist(meansLogReg[1]), "Training_LR" = unlist(meansLogReg[2]), 
+                    "Held_Out_Mecha" = unlist(meansMecha[1]), "Training_Mecha" = unlist(meansMecha[2]), 
+                    "Truth" = y_successes/n_attempts, x_distances)
+fitsDfLong = gather(fitsDf, key = "trainOrEval", value = "prob", c("Held_Out_Mecha", "Training_Mecha", "Held_Out_LR", "Training_LR", "Truth"))
+
+ggplot(data = fitsDfLong) +
+  aes(x = x_distances) +
+  aes(y = prob) +
+  geom_line(aes(color=factor(trainOrEval)))
+
+
+
+```
+Some wrong speculations below
+
+ # The role of max ent distributions
+ 
+ The claim that max entropy distributions are the most conservative distributions given the stated constraints of the model then why do we get over-fitting? It has to be because the model doesn't capture the data generating process properly. In the golf example logistic regression is clearly a bad fit and the mechanistic golf model, while probably not a maximum entropy likelihood, capture the model much better. 
+ 
+ # Where is the computation?
+ 
+ In a nutshell classic null hypothesis testing places computation in the world and focuses on determining whether the experiment (world computation) came up with a likely interesting result with sensitivity to a possible random result. Bayesian modeling on the other hand has the OPTION of creating a generative model internally and seeing how well it describes the data observed with sensitivity to a possible random result. 
+ 
+Lots of science happens in environments where world-computer experiments cannot happen, if we had two planets we could try environmental interventions on the 'treatment' planet leaving one as the control--best way known to do it. 
+
+# The take home about overfitting
+
+If someone accused you of overfitting a randomized control trial the right response is not that 'reality has overfit the data' but that the treatment or control has bias, poorly measured data or some other flaw. It _is_ the data generating process (DGP) and the only question is some problem outside of that which is a function of our feeble minds relationship to the DGP. 
+
+On the model authoring side in the context of simulations, when the DGP is perfectly modeled then the difference between posterior predictive check and the held out data predictions is zero. Bad priors will eventually wash out which is the only influencing mechanism. 
+
+So a useful metric might be to compare predictive performance on held out vs training data to determine correctness of model. Not sure if this is solid metric or not. 
+
+The problem with this idea is that for single data point there is no way to estimate a parameter without including noise. Perhaps two parameters is sufficient? Or keep growing the number? 
+
+

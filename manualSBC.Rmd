@@ -1,0 +1,43 @@
+---
+title: "SBC_manual"
+author: "Breck Baldwin"
+date: "5/28/2021"
+output: html_document
+---
+```{r}
+
+library(cmdstanr)
+
+model <- cmdstan_model("stan/userGuideExSBC.stan")
+ranks_mu <- c()
+ranks_sigma <- c()
+
+num_draws = 100
+goalDraws = 1000
+eff = -1
+numChains = 4
+
+while (eff < goalDraws) {
+    num_draws = num_draws * 2
+    fit <- model$sample(iter_sampling = num_draws, num_chains = numChains)
+    eff_all = fit$summary(variables = c('mu', 'sigma'))
+    eff = min(eff_all$ess_bulk,eff_all$ess_tail)
+}
+
+thinningFactor = 4
+
+for (i in 1:100) {
+  fit <- model$sample(iter_sampling = thinningFactor * goalDraws / numChains,
+                      num_chains = numChains)
+  #print(fit$summary())
+  drawsDf <- fit$draws(variables = c('mu_rank', 'sigma_rank'), 
+                       format = 'draws_df')
+  numDraws = length(drawsDf$mu_rank)
+  thinningVector = seq(1,numDraws,thinningFactor)
+  ranks_mu <- c(ranks_mu,sum(drawsDf$mu_rank[thinningVector]))
+  ranks_sigma <- c(ranks_sigma, sum(sample(drawsDf$sigma_rank[thinningVector])))
+}
+
+hist(ranks_mu)
+hist(ranks_sigma)
+```

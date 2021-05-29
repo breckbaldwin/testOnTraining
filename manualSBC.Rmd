@@ -5,7 +5,6 @@ date: "5/28/2021"
 output: html_document
 ---
 ```{r}
-
 library(cmdstanr)
 
 model <- cmdstan_model("stan/userGuideExSBC.stan")
